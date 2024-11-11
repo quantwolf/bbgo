@@ -3,16 +3,30 @@ package okexapi
 import (
 	"context"
 	"fmt"
-	"github.com/c9s/bbgo/pkg/types"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/c9s/bbgo/pkg/types"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/c9s/bbgo/pkg/testutil"
 )
+
+func TestNewClient(t *testing.T) {
+	client := NewClient()
+	assert.NotNil(t, client)
+}
+
+// func TestMain(m *testing.M) {
+
+
+
+// 	os.Exit(m.Run())
+// }
 
 func getTestClientOrSkip(t *testing.T) *RestClient {
 	if b, _ := strconv.ParseBool(os.Getenv("CI")); b {
@@ -64,6 +78,13 @@ func TestClient_GetMarketTicker(t *testing.T) {
 }
 
 func TestClient_GetAcountInfo(t *testing.T) {
+	err := godotenv.Load("../../../../.env.local")
+	if err != nil {
+		fmt.Println("Error loading .env file")
+	}
+
+	os.Setenv("TEST_OKEX", "1")
+
 	client := getTestClientOrSkip(t)
 	ctx := context.Background()
 	req := client.NewGetAccountInfoRequest()
