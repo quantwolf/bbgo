@@ -204,6 +204,7 @@ func (e *GeneralOrderExecutor) Bind() {
 		})
 
 		e.tradeCollector.OnPositionUpdate(func(position *types.Position) {
+			log.Debugf("position changed: %s", position)
 			Notify(position)
 		})
 	}

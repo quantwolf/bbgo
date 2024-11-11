@@ -74,6 +74,16 @@ func (s *StandardStream) EmitOrderUpdate(order Order) {
 	}
 }
 
+func (s *StandardStream) OnPositionUpdate(cb func(position PositionInfo)) {
+	s.positionUpdateCallbacks = append(s.positionUpdateCallbacks, cb)
+}
+
+func (s *StandardStream) EmitPositionUpdate(position PositionInfo) {
+	for _, cb := range s.positionUpdateCallbacks {
+		cb(position)
+	}
+}
+
 func (s *StandardStream) OnBalanceSnapshot(cb func(balances BalanceMap)) {
 	s.balanceSnapshotCallbacks = append(s.balanceSnapshotCallbacks, cb)
 }
@@ -208,6 +218,8 @@ type StandardStreamEventHub interface {
 	OnTradeUpdate(cb func(trade Trade))
 
 	OnOrderUpdate(cb func(order Order))
+
+	OnPositionUpdate(cb func(position PositionInfo))
 
 	OnBalanceSnapshot(cb func(balances BalanceMap))
 

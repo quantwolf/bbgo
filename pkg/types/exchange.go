@@ -167,6 +167,11 @@ type ExchangeRewardService interface {
 	QueryRewards(ctx context.Context, startTime time.Time) ([]Reward, error)
 }
 
+type ExchangePositionUpdateService interface {
+	QueryPositionInfo(ctx context.Context, symbol string) (*PositionInfo, error)
+	UpdatePosition(ctx context.Context, position *Position) error
+}
+
 type TradeQueryOptions struct {
 	StartTime   *time.Time
 	EndTime     *time.Time
