@@ -45,10 +45,11 @@ type InstrumentType string
 
 const (
 	InstrumentTypeSpot    InstrumentType = "SPOT"
+	InstrumentTypeMargin  InstrumentType = "MARGIN"
 	InstrumentTypeSwap    InstrumentType = "SWAP"
 	InstrumentTypeFutures InstrumentType = "FUTURES"
 	InstrumentTypeOption  InstrumentType = "OPTION"
-	InstrumentTypeMARGIN  InstrumentType = "MARGIN"
+	InstrumentTypeAny     InstrumentType = "ANY"
 )
 
 type OrderState string

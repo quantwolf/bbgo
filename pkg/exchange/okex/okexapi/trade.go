@@ -35,6 +35,12 @@ func (c *RestClient) NewGetTransactionDetailsRequest() *GetTransactionDetailsReq
 	}
 }
 
+func (c *RestClient) NewClosePositionOrderRequest() *ClosePositionRequest {
+	return &ClosePositionRequest{
+		client: c,
+	}
+}
+
 func (r *PlaceOrderRequest) Parameters() map[string]interface{} {
 	params, _ := r.GetParameters()
 	return params

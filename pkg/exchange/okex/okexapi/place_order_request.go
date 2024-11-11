@@ -39,6 +39,10 @@ type PlaceOrderRequest struct {
 	// non-margin mode cash
 	tradeMode TradeMode `param:"tdMode" validValues:"cross,isolated,cash"`
 
+	// Margin currency
+	// Only applicable to cross MARGIN orders in Single-currency margin
+	marginCurrency *string `param:"ccy"`
+
 	// A combination of case-sensitive alphanumerics, all numbers, or all letters of up to 32 characters.
 	clientOrderID *string `param:"clOrdId"`
 
@@ -54,6 +58,20 @@ type PlaceOrderRequest struct {
 
 	// price
 	price *string `param:"px"`
+
+	// Take-profit trigger price
+	takeProfitTriggerPx *string `param:"tpTriggerPx"`
+	// Take-profit order price
+	takeProfitOrdPx *string `param:"tpOrdPx"`
+	// Take-profit trigger price type
+	takeProfitTriggerPxType *string `param:"tpTriggerPxType"`
+
+	// Stop-loss trigger price
+	stopLossTriggerPx *string `param:"slTriggerPx"`
+	// Stop-loss order price
+	stopLossOrdPx *string `param:"slOrdPx"`
+	// Stop-loss trigger price type
+	stopLossTriggerPxType *string `param:"slTriggerPxType"`
 
 	// Whether the target currency uses the quote or base currency.
 	// base_ccy: Base currency ,quote_ccy: Quote currency

@@ -38,6 +38,8 @@ var (
 	batchCancelOrderLimiter = rate.NewLimiter(rate.Every(33*time.Millisecond), 1)
 	// Rate Limit: 60 requests per 2 seconds, Rate limit rule: UserID
 	queryOpenOrderLimiter = rate.NewLimiter(rate.Every(33*time.Millisecond), 1)
+	// Rate Limit: 60 requests per 2 seconds, Rate limit rule: UserID
+	queryAlgoOpenOrderLimiter = rate.NewLimiter(rate.Every(33*time.Millisecond), 1)
 	// Rate Limit: 20 requests per 2 seconds, Rate limit rule: UserID
 	queryClosedOrderRateLimiter = rate.NewLimiter(rate.Every(100*time.Millisecond), 1)
 	// Rate Limit: 10 requests per 2 seconds, Rate limit rule: UserID
@@ -65,6 +67,8 @@ var log = logrus.WithFields(logrus.Fields{
 var ErrSymbolRequired = errors.New("symbol is a required parameter")
 
 type Exchange struct {
+	types.MarginSettings
+
 	key, secret, passphrase, brokerId string
 
 	client      *okexapi.RestClient
@@ -231,8 +235,17 @@ func (e *Exchange) QueryAccountBalances(ctx context.Context) (types.BalanceMap, 
 }
 
 func (e *Exchange) SubmitOrder(ctx context.Context, order types.SubmitOrder) (*types.Order, error) {
+	if e.IsMargin {
+		return e.submitMarginOrder(ctx, order)
+	} else {
+		return e.submitSpotOrder(ctx, order)
+	}
+}
+
+func (e *Exchange) submitSpotOrder(ctx context.Context, order types.SubmitOrder) (*types.Order, error) {
 	orderReq := e.client.NewPlaceOrderRequest()
 
+	orderReq.TradeMode("cash")
 	orderReq.InstrumentID(toLocalSymbol(order.Symbol))
 	orderReq.Side(toLocalSideType(order.Side))
 	orderReq.Size(order.Market.FormatQuantity(order.Quantity))
@@ -291,21 +304,16 @@ func (e *Exchange) SubmitOrder(ctx context.Context, order types.SubmitOrder) (*t
 		return nil, fmt.Errorf("unexpected length of order response: %v", orders)
 	}
 
-	orderID, err := strconv.ParseUint(orders[0].OrderID, 10, 64)
+	orderRes, err := e.QueryOrder(ctx, types.OrderQuery{
+		Symbol:        order.Symbol,
+		OrderID:       orders[0].OrderID,
+		ClientOrderID: orders[0].ClientOrderID,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse response order id: %w", err)
+		return nil, fmt.Errorf("failed to query order by id: %s, clientOrderId: %s, err: %w", orders[0].OrderID, orders[0].ClientOrderID, err)
 	}
 
-	return &types.Order{
-		SubmitOrder:      order,
-		Exchange:         types.ExchangeOKEx,
-		OrderID:          orderID,
-		Status:           types.OrderStatusNew,
-		ExecutedQuantity: fixedpoint.Zero,
-		IsWorking:        true,
-		CreationTime:     types.Time(timeNow),
-		UpdateTime:       types.Time(timeNow),
-	}, nil
+	return orderRes, nil
 
 	// TODO: move this to batch place orders interface
 	/*
@@ -337,6 +345,175 @@ func (e *Exchange) SubmitOrder(ctx context.Context, order types.SubmitOrder) (*t
 			})
 		}
 	*/
+}
+
+func (e *Exchange) autoCancelAllAlgoOrders(ctx context.Context, symbol string) error {
+	orders, err1 := e.QueryAlgoOpenOrders(ctx, symbol)
+	ocoOrders, err2 := e.QueryOCOAlgoOpenOrders(ctx, symbol)
+
+	log.WithField("orders", orders).
+		WithField("ocoOrders", ocoOrders).
+		WithField("error1", err1).
+		WithField("error2", err2).
+		Info("autoCancelAlgoOrders_QueryOpenOrders_result")
+
+	if len(orders)+len(ocoOrders) > 0 {
+		allOrders := make([]types.Order, 0)
+
+		if len(orders) > 0 {
+			allOrders = append(allOrders, orders...)
+		}
+
+		if len(ocoOrders) > 0 {
+			allOrders = append(allOrders, ocoOrders...)
+		}
+
+		err := e.CancelAlgoOrders(ctx, allOrders...)
+		if err != nil {
+			log.WithField("Symbol", symbol).
+				WithError(err).
+				Error("autoCancelAlgoOrders_CancelOrders_fail")
+		}
+
+		log.WithField("Symbol", symbol).
+			Info("autoCancelAlgoOrders_CancelOrders_ok")
+	}
+
+	return nil
+}
+
+func (e *Exchange) submitClosePositionOrder(ctx context.Context, order types.SubmitOrder) (*types.Order, error) {
+	orderReq := e.client.NewClosePositionOrderRequest()
+
+	orderReq.InstrumentID(toLocalSymbol(order.Symbol))
+
+	orderReq.MarginMode("cross")
+	orderReq.Ccy(order.Market.QuoteCurrency)
+
+	if e.IsIsolatedMargin {
+		orderReq.MarginMode("isolated")
+	}
+
+	orderReq.Tag(order.Tag)
+	orderReq.AutoCxl(true)
+
+	params, _ := orderReq.GetParameters()
+	log.WithField("params", params).
+		Info("order_req_start")
+
+	orderHead, err := orderReq.Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("orderHead", orderHead).
+		Info("order_req_end")
+
+	return &types.Order{
+		SubmitOrder:      order,
+		Exchange:         types.ExchangeOKEx,
+		OrderID:          uint64(0),
+		Status:           types.OrderStatusNew,
+		ExecutedQuantity: fixedpoint.Zero,
+		IsWorking:        true,
+		CreationTime:     types.Time(time.Now()),
+		UpdateTime:       types.Time(time.Now()),
+		IsMargin:         false,
+		IsIsolated:       false,
+	}, nil
+}
+
+func (e *Exchange) submitMarginOrder(ctx context.Context, order types.SubmitOrder) (*types.Order, error) {
+	if order.ClosePosition {
+		e.autoCancelAllAlgoOrders(ctx, order.Symbol)
+		return e.submitClosePositionOrder(ctx, order)
+	}
+
+	orderReq := e.client.NewPlaceOrderRequest()
+
+	orderType, err := toLocalOrderType(order.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	// Margin mode cross isolated
+	if e.IsIsolatedMargin {
+		orderReq.TradeMode(okexapi.TradeModeIsolated)
+	} else {
+		orderReq.TradeMode(okexapi.TradeModeCross)
+	}
+
+	orderReq.MarginCurrency(order.Market.QuoteCurrency)
+	orderReq.InstrumentID(toLocalSymbol(order.Symbol))
+	orderReq.Side(toLocalSideType(order.Side))
+
+	if order.Market.Symbol != "" {
+		orderReq.Size(order.Market.FormatQuantity(order.Quantity))
+	} else {
+		// TODO report error
+		orderReq.Size(order.Quantity.FormatString(8))
+	}
+
+	// set price field for limit orders
+	switch order.Type {
+	case types.OrderTypeStopLimit, types.OrderTypeLimit:
+		if order.Market.Symbol != "" {
+			orderReq.Price(order.Market.FormatPrice(order.Price))
+		} else {
+			// TODO report error
+			orderReq.Price(order.Price.FormatString(8))
+		}
+	}
+
+	switch order.TimeInForce {
+	case "FOK":
+		orderReq.OrderType(okexapi.OrderTypeFOK)
+	case "IOC":
+		orderReq.OrderType(okexapi.OrderTypeIOC)
+	default:
+		orderReq.OrderType(orderType)
+	}
+
+	// Set stop loss trigger price
+	if order.StopPrice.Compare(fixedpoint.Zero) > 0 {
+		orderReq.StopLossTriggerPxType("last")
+		orderReq.StopLossTriggerPx(order.Market.FormatPrice(order.StopPrice))
+		orderReq.StopLossOrdPx("-1")
+	}
+
+	// Set take profit trigger price
+	if order.TakePrice.Compare(fixedpoint.Zero) > 0 {
+		orderReq.TakeProfitTriggerPxType("last")
+		orderReq.TakeProfitTriggerPx(order.Market.FormatPrice(order.TakePrice))
+		orderReq.TakeProfitOrdPx("-1")
+	}
+
+	params, _ := orderReq.GetParameters()
+	log.WithField("params", params).
+		Info("submitMarginOrder_start")
+
+	orders, err := orderReq.Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	log.WithField("orders", orders).
+		Info("submitMarginOrder_result")
+
+	if len(orders) != 1 {
+		return nil, fmt.Errorf("unexpected length of order response: %v", orders)
+	}
+
+	orderRes, err := e.QueryOrder(ctx, types.OrderQuery{
+		Symbol:        order.Symbol,
+		OrderID:       orders[0].OrderID,
+		ClientOrderID: orders[0].ClientOrderID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to query order by id: %s, clientOrderId: %s, err: %w", orders[0].OrderID, orders[0].ClientOrderID, err)
+	}
+
+	return orderRes, nil
 }
 
 // QueryOpenOrders retrieves the pending orders. The data returned is ordered by createdTime, and we utilized the
@@ -382,6 +559,217 @@ func (e *Exchange) QueryOpenOrders(ctx context.Context, symbol string) (orders [
 	return orders, err
 }
 
+func (e *Exchange) QueryRawAlgoOpenOrders(ctx context.Context, symbol string) (orders []okexapi.AlgoOrder, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	nextCursor := ""
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID).
+			After(nextCursor)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Info("Exchange#QueryRawAlgoOpenOrders_start")
+
+		openOrders, err := req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		orders = append(orders, openOrders...)
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", openOrders).
+			WithField("orders", orders).
+			Info("Exchange#QueryRawAlgoOpenOrders_result")
+
+		orderLen := len(openOrders)
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Info("Exchange#QueryRawAlgoOpenOrders_retry")
+
+		nextCursor = openOrders[orderLen-1].AlgoID
+	}
+
+	return orders, err
+}
+
+func (e *Exchange) QueryAlgoOpenOrders(ctx context.Context, symbol string) (orders []types.Order, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	nextCursor := ""
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID).
+			After(nextCursor)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Info("QueryAlgoOpenOrders_start")
+
+		openOrders, err := req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", openOrders).
+			Info("QueryAlgoOpenOrders_result")
+
+		for _, o := range openOrders {
+			amount, _ := fixedpoint.NewFromString(o.Sz)
+			orders = append(orders, types.Order{
+				SubmitOrder: types.SubmitOrder{
+					Symbol:   symbol,
+					Quantity: amount,
+				},
+				UUID: o.AlgoID,
+			})
+		}
+
+		orderLen := len(openOrders)
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		nextCursor = openOrders[orderLen-1].AlgoID
+	}
+
+	return orders, err
+}
+
+func (e *Exchange) QueryRawOCOAlgoOpenOrders(ctx context.Context, symbol string) (orders []okexapi.AlgoOrder, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	nextCursor := ""
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetOCOAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID).
+			After(nextCursor)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Info("Exchange#QueryRawOCOAlgoOpenOrders_start")
+
+		openOrders, err := req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		orders = append(orders, openOrders...)
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", openOrders).
+			WithField("orders", orders).
+			Info("Exchange#QueryRawOCOAlgoOpenOrders_result")
+
+		orderLen := len(openOrders)
+
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Info("Exchange#QueryRawOCOAlgoOpenOrders_retry")
+
+		nextCursor = openOrders[orderLen-1].AlgoID
+	}
+
+	return orders, err
+}
+
+func (e *Exchange) QueryOCOAlgoOpenOrders(ctx context.Context, symbol string) (orders []types.Order, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	nextCursor := ""
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetOCOAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID).
+			After(nextCursor)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Info("QueryOCOAlgoOpenOrders_start")
+
+		openOrders, err := req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", openOrders).
+			Info("QueryOCOAlgoOpenOrders_result")
+
+		for _, o := range openOrders {
+			orders = append(orders, types.Order{
+				SubmitOrder: types.SubmitOrder{
+					Symbol: symbol,
+				},
+				UUID: o.AlgoID,
+			})
+		}
+
+		orderLen := len(openOrders)
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		nextCursor = openOrders[orderLen-1].AlgoID
+	}
+
+	return orders, err
+}
+
 func (e *Exchange) CancelOrders(ctx context.Context, orders ...types.Order) error {
 	if len(orders) == 0 {
 		return nil
@@ -411,6 +799,42 @@ func (e *Exchange) CancelOrders(ctx context.Context, orders ...types.Order) erro
 	batchReq := e.client.NewBatchCancelOrderRequest()
 	batchReq.Add(reqs...)
 	_, err := batchReq.Do(ctx)
+	return err
+}
+
+func (e *Exchange) CancelAlgoOrders(ctx context.Context, orders ...types.Order) error {
+	if len(orders) == 0 {
+		return nil
+	}
+
+	var reqs []*okexapi.CancelAlgoOrder
+	for _, order := range orders {
+		if len(order.Symbol) == 0 {
+			return ErrSymbolRequired
+		}
+
+		reqs = append(reqs, &okexapi.CancelAlgoOrder{
+			InstrumentID: toLocalSymbol(order.Symbol),
+			AlgoOrderID:  order.UUID,
+		})
+	}
+
+	if err := batchCancelOrderLimiter.Wait(ctx); err != nil {
+		return fmt.Errorf("batch cancel order rate limiter wait error: %w", err)
+	}
+	batchReq := e.client.NewCancelAlgoOrderRequest()
+	batchReq.SetPayload(reqs)
+
+	params, _ := batchReq.GetParameters()
+	log.WithField("params", params).
+		Info("CancelAlgoOrders_start")
+
+	resp, err := batchReq.Do(ctx)
+
+	log.WithField("resp", resp).
+		WithField("error", err).
+		Info("CancelAlgoOrders_result")
+
 	return err
 }
 
@@ -675,4 +1099,113 @@ func (e *Exchange) SupportedInterval() map[types.Interval]int {
 func (e *Exchange) IsSupportedInterval(interval types.Interval) bool {
 	_, ok := SupportedIntervals[interval]
 	return ok
+}
+
+func (e *Exchange) PlaceTakeProfitAndStopLossOrder(ctx context.Context, position *types.Position) error {
+	orderReq := e.client.NewPlaceOCOAlgoOrderRequest()
+
+	orderReq.InstID(toLocalSymbol(position.Symbol))
+
+	// Margin mode cross isolated
+	if e.IsIsolatedMargin {
+		orderReq.TdMode(okexapi.TradeModeIsolated)
+	} else {
+		orderReq.TdMode(okexapi.TradeModeCross)
+	}
+
+	orderReq.Ccy(position.Market.QuoteCurrency)
+
+	if position.IsLong() {
+		orderReq.Side("sell")
+		orderReq.Sz(position.Market.FormatQuantity(position.Quote.Abs()))
+	} else if position.IsShort() {
+		orderReq.Side("buy")
+		orderReq.Sz(position.Market.FormatQuantity(position.Base.Abs()))
+	}
+
+	if position.TpTriggerPx != nil {
+		orderReq.TpTriggerPxType("last")
+		orderReq.TpTriggerPx(position.Market.FormatPrice(*position.TpTriggerPx))
+		orderReq.TpOrdPx("-1")
+	}
+
+	if position.SlTriggerPx != nil {
+		orderReq.SlTriggerPxType("last")
+		orderReq.SlTriggerPx(position.Market.FormatPrice(*position.SlTriggerPx))
+		orderReq.SlOrdPx("-1")
+	}
+
+	params, _ := orderReq.GetParameters()
+	log.WithField("params", params).
+		Info("PlaceTakeProfitStopLossOrder_start")
+
+	orders, err := orderReq.Do(ctx)
+	if err != nil {
+		log.WithField("params", params).
+			WithError(err).
+			Error("PlaceTakeProfitStopLossOrder_fail")
+
+		return err
+	}
+
+	log.WithField("orders", orders).
+		Info("PlaceTakeProfitStopLossOrder_ok")
+
+	return nil
+}
+
+func (e *Exchange) UpdatePosition(ctx context.Context, position *types.Position) error {
+	e.autoCancelAllAlgoOrders(ctx, position.Symbol)
+	return e.PlaceTakeProfitAndStopLossOrder(ctx, position)
+}
+
+func (e *Exchange) QueryPositionInfo(ctx context.Context, symbol string) (*types.PositionInfo, error) {
+	position := &types.PositionInfo{
+		Symbol: symbol,
+	}
+
+	orders, err := e.QueryRawAlgoOpenOrders(context.Background(), symbol)
+	if err != nil {
+		log.WithError(err).Error("handlePositionDetailsEvent_QueryRawAlgoOpenOrders_error")
+		return nil, errors.Wrap(err, "QueryPositionInfo_QueryRawAlgoOpenOrders_error")
+	}
+
+	ocoOrders, err := e.QueryRawOCOAlgoOpenOrders(context.Background(), symbol)
+	if err != nil {
+		log.WithError(err).Error("handlePositionDetailsEvent_QueryRawOCOAlgoOpenOrders_error")
+		return nil, errors.Wrap(err, "QueryPositionInfo_QueryRawOCOAlgoOpenOrders_error")
+	}
+
+	orders = append(orders, ocoOrders...)
+
+	if len(orders) > 0 {
+		algoOrder := orders[0]
+
+		slTriggerPx, err := fixedpoint.NewFromString(algoOrder.SlTriggerPx)
+		if err != nil {
+			log.WithError(err).Error("handlePositionDetailsEvent_parse_SlTriggerPx_error")
+			return nil, errors.Wrap(err, "handlePositionDetailsEvent_parse_SlTriggerPx_error")
+		} else {
+			position.SlTriggerPxType = algoOrder.SlTriggerPxType
+			position.SlOrdPx = algoOrder.SlOrdPx
+			position.SlTriggerPx = &slTriggerPx
+		}
+
+		tpTriggerPx, err := fixedpoint.NewFromString(algoOrder.TpTriggerPx)
+		if err != nil {
+			log.WithError(err).Error("handlePositionDetailsEvent_parse_TpTriggerPx_error")
+			return nil, errors.Wrap(err, "handlePositionDetailsEvent_parse_TpTriggerPx_error")
+		} else {
+			position.TpTriggerPxType = algoOrder.TpTriggerPxType
+			position.TpOrdPx = algoOrder.TpOrdPx
+			position.TpTriggerPx = &tpTriggerPx
+		}
+	}
+
+	log.WithField("symbol", symbol).
+		WithField("position", position).
+		WithField("orders", orders).
+		Info("Exchange#QueryPositionInfo_result")
+
+	return position, nil
 }

@@ -76,7 +76,7 @@ func (g *GetOrderHistoryRequest) GetQueryParameters() (url.Values, error) {
 
 	// TEMPLATE check-valid-values
 	switch instrumentType {
-	case InstrumentTypeSpot, InstrumentTypeSwap, InstrumentTypeFutures, InstrumentTypeOption, InstrumentTypeMARGIN:
+	case InstrumentTypeSpot, InstrumentTypeMargin, InstrumentTypeSwap, InstrumentTypeFutures, InstrumentTypeOption, InstrumentTypeAny:
 		params["instType"] = instrumentType
 
 	default:

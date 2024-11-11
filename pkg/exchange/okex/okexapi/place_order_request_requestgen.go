@@ -21,6 +21,11 @@ func (r *PlaceOrderRequest) TradeMode(tradeMode TradeMode) *PlaceOrderRequest {
 	return r
 }
 
+func (p *PlaceOrderRequest) MarginCurrency(marginCurrency string) *PlaceOrderRequest {
+	p.marginCurrency = &marginCurrency
+	return p
+}
+
 func (r *PlaceOrderRequest) ClientOrderID(clientOrderID string) *PlaceOrderRequest {
 	r.clientOrderID = &clientOrderID
 	return r
@@ -46,9 +51,39 @@ func (r *PlaceOrderRequest) Size(size string) *PlaceOrderRequest {
 	return r
 }
 
+func (p *PlaceOrderRequest) TakeProfitTriggerPx(takeProfitTriggerPx string) *PlaceOrderRequest {
+	p.takeProfitTriggerPx = &takeProfitTriggerPx
+	return p
+}
+
 func (r *PlaceOrderRequest) Price(price string) *PlaceOrderRequest {
 	r.price = &price
 	return r
+}
+
+func (p *PlaceOrderRequest) TakeProfitOrdPx(takeProfitOrdPx string) *PlaceOrderRequest {
+	p.takeProfitOrdPx = &takeProfitOrdPx
+	return p
+}
+
+func (p *PlaceOrderRequest) TakeProfitTriggerPxType(takeProfitTriggerPxType string) *PlaceOrderRequest {
+	p.takeProfitTriggerPxType = &takeProfitTriggerPxType
+	return p
+}
+
+func (p *PlaceOrderRequest) StopLossTriggerPx(stopLossTriggerPx string) *PlaceOrderRequest {
+	p.stopLossTriggerPx = &stopLossTriggerPx
+	return p
+}
+
+func (p *PlaceOrderRequest) StopLossOrdPx(stopLossOrdPx string) *PlaceOrderRequest {
+	p.stopLossOrdPx = &stopLossOrdPx
+	return p
+}
+
+func (p *PlaceOrderRequest) StopLossTriggerPxType(stopLossTriggerPxType string) *PlaceOrderRequest {
+	p.stopLossTriggerPxType = &stopLossTriggerPxType
+	return p
 }
 
 func (r *PlaceOrderRequest) TargetCurrency(targetCurrency TargetCurrency) *PlaceOrderRequest {
@@ -92,6 +127,14 @@ func (r *PlaceOrderRequest) GetParameters() (map[string]interface{}, error) {
 
 	// assign parameter of tradeMode
 	params["tdMode"] = tradeMode
+	// check marginCurrency field -> json key ccy
+	if r.marginCurrency != nil {
+		marginCurrency := *r.marginCurrency
+
+		// assign parameter of marginCurrency
+		params["ccy"] = marginCurrency
+	} else {
+	}
 	// check clientOrderID field -> json key clOrdId
 	if r.clientOrderID != nil {
 		clientOrderID := *r.clientOrderID
@@ -151,6 +194,56 @@ func (r *PlaceOrderRequest) GetParameters() (map[string]interface{}, error) {
 
 		// assign parameter of price
 		params["px"] = price
+	} else {
+	}
+
+	// check takeProfitTriggerPx field -> json key tpTriggerPx
+	if r.takeProfitTriggerPx != nil {
+		takeProfitTriggerPx := *r.takeProfitTriggerPx
+
+		// assign parameter of takeProfitTriggerPx
+		params["tpTriggerPx"] = takeProfitTriggerPx
+	} else {
+	}
+	// check takeProfitOrdPx field -> json key tpOrdPx
+	if r.takeProfitOrdPx != nil {
+		takeProfitOrdPx := *r.takeProfitOrdPx
+
+		// assign parameter of takeProfitOrdPx
+		params["tpOrdPx"] = takeProfitOrdPx
+	} else {
+	}
+	// check takeProfitTriggerPxType field -> json key tpTriggerPxType
+	if r.takeProfitTriggerPxType != nil {
+		takeProfitTriggerPxType := *r.takeProfitTriggerPxType
+
+
+		// assign parameter of takeProfitTriggerPxType
+		params["tpTriggerPxType"] = takeProfitTriggerPxType
+	} else {
+	}
+	// check stopLossTriggerPx field -> json key slTriggerPx
+	if r.stopLossTriggerPx != nil {
+		stopLossTriggerPx := *r.stopLossTriggerPx
+
+		// assign parameter of stopLossTriggerPx
+		params["slTriggerPx"] = stopLossTriggerPx
+	} else {
+	}
+	// check stopLossOrdPx field -> json key slOrdPx
+	if r.stopLossOrdPx != nil {
+		stopLossOrdPx := *r.stopLossOrdPx
+
+		// assign parameter of stopLossOrdPx
+		params["slOrdPx"] = stopLossOrdPx
+	} else {
+	}
+	// check stopLossTriggerPxType field -> json key slTriggerPxType
+	if r.stopLossTriggerPxType != nil {
+		stopLossTriggerPxType := *r.stopLossTriggerPxType
+
+		// assign parameter of stopLossTriggerPxType
+		params["slTriggerPxType"] = stopLossTriggerPxType
 	} else {
 	}
 	// check targetCurrency field -> json key tgtCcy
