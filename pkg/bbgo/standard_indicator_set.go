@@ -185,3 +185,8 @@ func (s *StandardIndicatorSet) KalmanFilter(iw types.IntervalWindow) *indicator.
 	inc := s.allocateSimpleIndicator(&indicator.KalmanFilter{IntervalWindow: iw, AdditionalSmoothWindow: 0}, iw, "kalmanfilter")
 	return inc.(*indicator.KalmanFilter)
 }
+
+func (s *StandardIndicatorSet) VR(iw types.IntervalWindow) *indicator.VR {
+	inc := s.allocateSimpleIndicator(&indicator.VR{IntervalWindow: iw}, iw, "vr")
+	return inc.(*indicator.VR)
+}
