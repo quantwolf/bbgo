@@ -56,6 +56,19 @@ func (s *Stream) EmitMarketTradeEvent(tradeDetail []MarketTradeEvent) {
 	}
 }
 
+func (s *Stream) OnPositionDetailsEvent(cb func(positionDetails []PositionUpdateEvent)) {
+	s.positionDetailsEventCallbacks = append(s.positionDetailsEventCallbacks, cb)
+}
+
+func (s *Stream) EmitPositionDetailsEvent(positionDetails []PositionUpdateEvent) {
+	log.WithField("positionDetails", positionDetails).
+		Debug("EmitPositionDetailsEvent")
+
+	for _, cb := range s.positionDetailsEventCallbacks {
+		cb(positionDetails)
+	}
+}
+
 type StreamEventHub interface {
 	OnKLineEvent(cb func(candle KLineEvent))
 
@@ -66,4 +79,6 @@ type StreamEventHub interface {
 	OnOrderTradesEvent(cb func(orderTrades []OrderTradeEvent))
 
 	OnMarketTradeEvent(cb func(tradeDetail []MarketTradeEvent))
+
+	OnPositionDetailsEvent(cb func(positionDetails []PositionUpdateEvent)) 
 }

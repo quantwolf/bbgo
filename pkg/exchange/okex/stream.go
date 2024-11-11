@@ -11,6 +11,7 @@ import (
 
 	"github.com/c9s/bbgo/pkg/exchange/okex/okexapi"
 	"github.com/c9s/bbgo/pkg/exchange/retry"
+	"github.com/c9s/bbgo/pkg/fixedpoint"
 	"github.com/c9s/bbgo/pkg/types"
 )
 
@@ -43,11 +44,12 @@ type Stream struct {
 	balanceProvider types.ExchangeAccountService
 
 	// public callbacks
-	kLineEventCallbacks       []func(candle KLineEvent)
-	bookEventCallbacks        []func(book BookEvent)
-	accountEventCallbacks     []func(account okexapi.Account)
-	orderTradesEventCallbacks []func(orderTrades []OrderTradeEvent)
-	marketTradeEventCallbacks []func(tradeDetail []MarketTradeEvent)
+	kLineEventCallbacks           []func(candle KLineEvent)
+	bookEventCallbacks            []func(book BookEvent)
+	accountEventCallbacks         []func(account okexapi.Account)
+	orderTradesEventCallbacks     []func(orderTrades []OrderTradeEvent)
+	marketTradeEventCallbacks     []func(tradeDetail []MarketTradeEvent)
+	positionDetailsEventCallbacks []func(positionDetails []PositionUpdateEvent)
 }
 
 func NewStream(client *okexapi.RestClient, balanceProvider types.ExchangeAccountService) *Stream {
@@ -67,6 +69,7 @@ func NewStream(client *okexapi.RestClient, balanceProvider types.ExchangeAccount
 	stream.OnAccountEvent(stream.handleAccountEvent)
 	stream.OnMarketTradeEvent(stream.handleMarketTradeEvent)
 	stream.OnOrderTradesEvent(stream.handleOrderDetailsEvent)
+	stream.OnPositionDetailsEvent(stream.handlePositionDetailsEvent)
 	stream.OnConnect(stream.handleConnect)
 	stream.OnAuth(stream.subscribePrivateChannels(stream.emitBalanceSnapshot))
 	stream.kLineStream.OnKLineClosed(stream.EmitKLineClosed)
@@ -250,6 +253,146 @@ func (s *Stream) handleOrderDetailsEvent(orderTrades []OrderTradeEvent) {
 			}
 		} else {
 			s.EmitOrderUpdate(*order)
+		}
+	}
+}
+
+func (e *Stream) QueryAlgoOpenOrders(ctx context.Context, symbol string) (orders []okexapi.AlgoOrder, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Debug("Stream#QueryAlgoOpenOrders_start")
+
+		orders, err = req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Debug("Stream#QueryAlgoOpenOrders_result")
+
+		orderLen := len(orders)
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Debug("Stream#QueryAlgoOpenOrders_retry")
+	}
+
+	return orders, err
+}
+
+func (e *Stream) QueryOCOAlgoOpenOrders(ctx context.Context, symbol string) (orders []okexapi.AlgoOrder, err error) {
+	instrumentID := toLocalSymbol(symbol)
+
+	for {
+		if err := queryAlgoOpenOrderLimiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("query open orders rate limiter wait error: %w", err)
+		}
+
+		req := e.client.NewGetOCOAlgoOrdersRequest()
+		req.
+			InstrumentID(instrumentID)
+
+		params, _ := req.GetQueryParameters()
+		log.WithField("symbol", symbol).
+			WithField("params", params).
+			Debug("Stream#QueryOCOAlgoOpenOrders_start")
+
+		orders, err := req.Do(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query open orders: %w", err)
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Debug("Stream#QueryOCOAlgoOpenOrders_result")
+
+		orderLen := len(orders)
+		// a defensive programming to ensure the length of order response is expected.
+		if orderLen > defaultQueryLimit {
+			return nil, fmt.Errorf("unexpected open orders length %d", orderLen)
+		}
+
+		if orderLen < defaultQueryLimit {
+			break
+		}
+
+		log.WithField("symbol", symbol).
+			WithField("openOrders", orders).
+			Debug("Stream#QueryOCOAlgoOpenOrders_retry")
+	}
+
+	return orders, err
+}
+
+func (s *Stream) handlePositionDetailsEvent(positionDetails []PositionUpdateEvent) {
+
+	for _, positionDetail := range positionDetails {
+		position, err := positionDetail.toGlobalPosition()
+		if err != nil {
+			log.WithError(err).Errorf("error converting position details into positions")
+		} else {
+			orders, err := s.QueryAlgoOpenOrders(context.Background(), position.Symbol)
+			if err != nil {
+				log.WithError(err).Error("handlePositionDetailsEvent_QueryAlgoOpenOrders_error")
+			}
+
+			time.Sleep(time.Second)
+
+			ocoOrders, err := s.QueryOCOAlgoOpenOrders(context.Background(), position.Symbol)
+			if err != nil {
+				log.WithError(err).Error("handlePositionDetailsEvent_QueryAlgoOpenOrders_error")
+			}
+
+			orders = append(orders, ocoOrders...)
+
+			if len(orders) > 0 {
+				algoOrder := orders[0]
+
+				slTriggerPx, err := fixedpoint.NewFromString(algoOrder.SlTriggerPx)
+				if err != nil {
+					log.WithError(err).Error("handlePositionDetailsEvent_parse_SlTriggerPx_error")
+				} else {
+					position.SlTriggerPxType = algoOrder.SlTriggerPxType
+					position.SlOrdPx = algoOrder.SlOrdPx
+					position.SlTriggerPx = &slTriggerPx
+				}
+
+				tpTriggerPx, err := fixedpoint.NewFromString(algoOrder.TpTriggerPx)
+				if err != nil {
+					log.WithError(err).Error("handlePositionDetailsEvent_parse_TpTriggerPx_error")
+				} else {
+					position.TpTriggerPxType = algoOrder.TpTriggerPxType
+					position.TpOrdPx = algoOrder.TpOrdPx
+					position.TpTriggerPx = &tpTriggerPx
+				}
+			}
+
+			log.WithField("position", position).
+				WithField("orders", orders).
+				Debug("handlePositionDetailsEvent")
+
+			s.EmitPositionUpdate(position)
 		}
 	}
 }

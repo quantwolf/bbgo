@@ -391,6 +391,83 @@ func toGlobalSideType(side okexapi.SideType) (types.SideType, error) {
 	}
 }
 
+type PositionUpdateEvent struct {
+	InstrumentType string `json:"instType"`
+	InstrumentID   string `json:"instId"`
+
+	MarginMode string           `json:"mgnMode"`
+	PosId      string           `json:"posId"`
+	PosSide    string           `json:"posSide"`
+	Pos        fixedpoint.Value `json:"pos"`
+	BaseBal    fixedpoint.Value `json:"baseBal"`
+	QuoteBal   fixedpoint.Value `json:"quoteBal"`
+	PosCCY     string           `json:"posCcy"`
+	AvailPos   fixedpoint.Value `json:"availPos"`
+	AvgPx      fixedpoint.Value `json:"avgPx"`
+	Upl        fixedpoint.Value `json:"upl"`
+	UplRatio   fixedpoint.Value `json:"uplRatio"`
+
+	Lever       fixedpoint.Value `json:"lever"`
+	MarkPx      fixedpoint.Value `json:"markPx"`
+	IMR         fixedpoint.Value `json:"imr"`
+	Margin      fixedpoint.Value `json:"margin"`
+	MarginRatio fixedpoint.Value `json:"mgnRatio"`
+	TradeID     string           `json:"tradeId"`
+	CCY         string           `json:"ccy"`
+	Last        fixedpoint.Value `json:"last"`
+
+	LiabCcy string           `json:"liabCcy"`
+	Liab    fixedpoint.Value `json:"liab"`
+
+	PushTime     types.MillisecondTimestamp `json:"pTime"`
+	UpdateTime   types.MillisecondTimestamp `json:"uTime"`
+	CreationTime types.MillisecondTimestamp `json:"cTime"`
+}
+
+func (positionDetail *PositionUpdateEvent) toGlobalPosition() (types.PositionInfo, error) {
+	tradeID, err := strconv.ParseInt(positionDetail.TradeID, 10, 64)
+	if err != nil {
+		return types.PositionInfo{}, fmt.Errorf("error parsing tradeId value: %s", positionDetail.TradeID)
+	}
+
+	sections := strings.Split(positionDetail.InstrumentID, "-")
+	baseCurrency := sections[0]
+	quoteCurrency := sections[1]
+
+	base := fixedpoint.Value(0)
+	quote := fixedpoint.Value(0)
+
+	if positionDetail.InstrumentType == "MARGIN" {
+		if positionDetail.PosCCY == baseCurrency {
+			base = positionDetail.Pos
+			quote = positionDetail.Liab
+		} else {
+			base = positionDetail.Liab
+			quote = positionDetail.Pos
+		}
+	} else if positionDetail.InstrumentType == "SWAP" ||
+		positionDetail.InstrumentType == "FUTURES" ||
+		positionDetail.InstrumentType == "OPTION" {
+		// TODO
+		base = positionDetail.Pos
+		quote = fixedpoint.Value(0)
+	}
+
+	return types.PositionInfo{
+		Symbol:        toGlobalSymbol(positionDetail.InstrumentID),
+		BaseCurrency:  baseCurrency,
+		QuoteCurrency: quoteCurrency,
+
+		Base:        base,
+		Quote:       quote,
+		AverageCost: positionDetail.AvgPx,
+		TradeID:     uint64(tradeID),
+
+		OpenedAt:  positionDetail.CreationTime.Time(),
+		ChangedAt: positionDetail.UpdateTime.Time(),
+	}, nil
+}
+
 type MarketTradeEvent struct {
 	InstId    string                     `json:"instId"`
 	TradeId   types.StrInt64             `json:"tradeId"`

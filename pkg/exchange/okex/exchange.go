@@ -294,7 +294,6 @@ func (e *Exchange) submitSpotOrder(ctx context.Context, order types.SubmitOrder)
 		orderReq.Tag(e.brokerId)
 	}
 
-	timeNow := time.Now()
 	orders, err := orderReq.Do(ctx)
 	if err != nil {
 		return nil, err
