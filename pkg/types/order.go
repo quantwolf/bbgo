@@ -141,6 +141,7 @@ type SubmitOrder struct {
 	AveragePrice fixedpoint.Value `json:"averagePrice,omitempty"`
 
 	StopPrice fixedpoint.Value `json:"stopPrice,omitempty" db:"stop_price"`
+	TakePrice fixedpoint.Value `json:"takePrice,omitempty" db:"take_price"`
 
 	Market Market `json:"-" db:"-"`
 
