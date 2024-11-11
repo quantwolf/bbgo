@@ -516,6 +516,7 @@ func (environ *Environment) syncWithUserConfig(ctx context.Context, userConfig *
 // Sync syncs all registered exchange sessions
 func (environ *Environment) Sync(ctx context.Context, userConfig ...*Config) error {
 	if environ.SyncService == nil {
+		log.Warn("Environment_Sync_skip_for_SyncService_nil")
 		return nil
 	}
 
