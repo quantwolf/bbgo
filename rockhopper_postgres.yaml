@@ -1,0 +1,16 @@
+# vim:filetype=yaml:
+# you can copy this file to rockhopper_postgres_local.yaml to have your modification
+---
+driver: postgres
+dialect: postgres
+package: main
+
+# unix socket connection to mysql with password
+# dsn: "root:123123@unix(/opt/local/var/run/mysql57/mysqld.sock)/bbgo_dev?parseTime=true"
+
+# tcp connection to mysql with password
+dsn: "postgres://romesa:c8b8be095861d4c86f2d9473670c1adc@rd-test-db.cluster-cv4gqxbqzmyx.ap-southeast-1.rds.amazonaws.com/romedb?application_name=romesrv"
+
+# tcp connection to mysql without password
+# dsn: "root@tcp(localhost:3306)/bbgo_dev?parseTime=true"
+migrationsDir: migrations/postgres
