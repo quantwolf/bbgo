@@ -31,6 +31,7 @@ const (
 	EventTypeAggTrade                EventType = "aggTrade"
 	EventTypeForceOrder              EventType = "forceOrder"
 
+	EventTypeTicker EventType = "24hrTicker"
 	// Our side defines the following event types since binance doesn't
 	// define the event name from the server messages.
 	//
@@ -382,7 +383,10 @@ func parseWebSocketEvent(message []byte) (interface{}, error) {
 			},
 			Depth: depth,
 		}, err
-
+	case EventTypeTicker:
+		var event TickerEvent
+		err := json.Unmarshal(message, &event)
+		return &event, err
 	case EventTypeKLine:
 		var event KLineEvent
 		err := json.Unmarshal(message, &event)
@@ -1177,5 +1181,56 @@ func (k *BookTickerEvent) BookTicker() types.BookTicker {
 		BuySize:  k.BuySize,
 		Sell:     k.Sell,
 		SellSize: k.SellSize,
+	}
+}
+
+/*
+	{
+		"e": "24hrTicker",  // 事件类型
+		"E": 1672515782136,     // 事件时间
+		"s": "BNBBTC",          // 交易对
+		"c": "0.0025",          // 最新成交价格
+		"o": "0.0010",          // 24小时前开始第一笔成交价格
+		"h": "0.0025",          // 24小时内最高成交价
+		"l": "0.0010",          // 24小时内最低成交加
+		"v": "10000",           // 成交量
+		"q": "18"               // 成交额
+
+		"b": "0.0024",      // 目前最高买单价
+		"B": "10",          // 目前最高买单量
+		"a": "0.0026",      // 目前最低卖单价
+		"A": "100",         // 目前最低卖单价的挂单量
+		"p": "0.0015",      // 24小时价格变化
+		"P": "250.00",      // 24小时价格变化（百分比）
+		"w": "0.0018",      // 平均价格
+		"x": "0.0009",      // 整整24小时之前，向前数的最后一次成交价格
+	}
+*/
+type TickerEvent struct {
+	EventBase
+
+	Symbol   string           `json:"s"`
+	Close    fixedpoint.Value `json:"c"`
+	Open     fixedpoint.Value `json:"o"`
+	High     fixedpoint.Value `json:"h"`
+	Low      fixedpoint.Value `json:"l"`
+	Volume   fixedpoint.Value `json:"v"`
+	Quote    fixedpoint.Value `json:"q"`
+	Buy      fixedpoint.Value `json:"b"`
+	BuySize  fixedpoint.Value `json:"B"`
+	Sell     fixedpoint.Value `json:"a"`
+	SellSize fixedpoint.Value `json:"A"`
+}
+
+func (k *TickerEvent) Ticker() types.Ticker {
+	return types.Ticker{
+		Symbol: k.Symbol,
+		Last:   k.Close,
+		Open:   k.Open,
+		High:   k.High,
+		Low:    k.Low,
+		Volume: k.Volume,
+		Buy:    k.Buy,
+		Sell:   k.Sell,
 	}
 }

@@ -55,6 +55,7 @@ type Stream struct {
 	outboundAccountPositionEventCallbacks []func(event *OutboundAccountPositionEvent)
 	executionReportEventCallbacks         []func(event *ExecutionReportEvent)
 	bookTickerEventCallbacks              []func(event *BookTickerEvent)
+	miniTickerEventCallbacks              []func(event *MiniTickerEvent)
 
 	// futures market data stream
 	markPriceUpdateEventCallbacks       []func(e *MarkPriceUpdateEvent)
@@ -220,6 +221,10 @@ func (s *Stream) handleExecutionReportEvent(e *ExecutionReportEvent) {
 
 func (s *Stream) handleBookTickerEvent(e *BookTickerEvent) {
 	s.EmitBookTickerUpdate(e.BookTicker())
+}
+
+func (s *Stream) handleTickerEvent(e *TickerEvent) {
+	s.EmitTicker(e.Ticker())
 }
 
 func (s *Stream) handleMarketTradeEvent(e *MarketTradeEvent) {

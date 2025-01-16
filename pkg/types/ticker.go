@@ -8,6 +8,7 @@ import (
 )
 
 type Ticker struct {
+	Symbol string
 	Time   time.Time
 	Volume fixedpoint.Value // `volume` from Max & binance
 	Last   fixedpoint.Value // `last` from Max, `lastPrice` from binance
@@ -35,5 +36,5 @@ func (t *Ticker) GetValidPrice() fixedpoint.Value {
 }
 
 func (t *Ticker) String() string {
-	return fmt.Sprintf("O:%s H:%s L:%s LAST:%s BID/ASK:%s/%s TIME:%s", t.Open, t.High, t.Low, t.Last, t.Buy, t.Sell, t.Time.String())
+	return fmt.Sprintf("%s: {O:%s H:%s L:%s LAST:%s BID/ASK:%s/%s TIME:%s}", t.Symbol, t.Open, t.High, t.Low, t.Last, t.Buy, t.Sell, t.Time.String())
 }

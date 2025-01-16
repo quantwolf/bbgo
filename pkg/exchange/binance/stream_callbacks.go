@@ -114,6 +114,16 @@ func (s *Stream) EmitBookTickerEvent(event *BookTickerEvent) {
 	}
 }
 
+func (s *Stream) OnTickerEvent(cb func(event *TickerEvent)) {
+	s.miniTickerEventCallbacks = append(s.miniTickerEventCallbacks, cb)
+}
+
+func (s *Stream) EmitTickerEvent(event *TickerEvent) {
+	for _, cb := range s.miniTickerEventCallbacks {
+		cb(event)
+	}
+}
+
 func (s *Stream) OnMarkPriceUpdateEvent(cb func(e *MarkPriceUpdateEvent)) {
 	s.markPriceUpdateEventCallbacks = append(s.markPriceUpdateEventCallbacks, cb)
 }
